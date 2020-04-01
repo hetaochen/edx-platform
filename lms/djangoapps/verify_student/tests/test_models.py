@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-
 import base64
 import simplejson as json
 from datetime import datetime, timedelta
@@ -9,12 +8,12 @@ import ddt
 import mock
 import requests.exceptions
 from django.conf import settings
-from django.test import TestCase
 from django.utils.timezone import now
 from freezegun import freeze_time
 from mock import patch
 from six.moves import range
 from student.tests.factories import UserFactory
+from verify_student.tests import TestVerificationBase
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 
 from common.test.utils import MockS3BotoMixin
@@ -90,50 +89,11 @@ def mock_software_secure_post_unavailable(url, headers=None, data=None, **kwargs
     raise requests.exceptions.ConnectionError
 
 
-class TestVerification(TestCase):
-    """
-    Common tests across all types of Verifications (e.g., SoftwareSecurePhotoVerification, SSOVerification)
-    """
-    def create_and_submit(self):
-        """Helper method to create a generic submission and send it."""
-        user = UserFactory.create()
-        attempt = SoftwareSecurePhotoVerification(user=user)
-        user.profile.name = u"Rust\u01B4"
-
-        attempt.upload_face_image("Just pretend this is image data")
-        attempt.upload_photo_id_image("Hey, we're a photo ID")
-        attempt.mark_ready()
-        attempt.submit()
-        return attempt
-
-    def verification_active_at_datetime(self, attempt):
-        """
-        Tests to ensure the Verification is active or inactive at the appropriate datetimes.
-        """
-        # Not active before the created date
-        before = attempt.created_at - timedelta(seconds=1)
-        self.assertFalse(attempt.active_at_datetime(before))
-
-        # Active immediately after created date
-        after_created = attempt.created_at + timedelta(seconds=1)
-        self.assertTrue(attempt.active_at_datetime(after_created))
-
-        # Active immediately before expiration date
-        expiration = attempt.created_at + timedelta(days=settings.VERIFY_STUDENT["DAYS_GOOD_FOR"])
-        before_expiration = expiration - timedelta(seconds=1)
-        self.assertTrue(attempt.active_at_datetime(before_expiration))
-
-        # Not active after the expiration date
-        attempt.created_at = attempt.created_at - timedelta(days=settings.VERIFY_STUDENT["DAYS_GOOD_FOR"])
-        attempt.save()
-        self.assertFalse(attempt.active_at_datetime(now() + timedelta(days=1)))
-
-
 # Lots of patching to stub in our own settings, and HTTP posting
 @patch.dict(settings.VERIFY_STUDENT, FAKE_SETTINGS)
 @patch('lms.djangoapps.verify_student.models.requests.post', new=mock_software_secure_post)
 @ddt.ddt
-class TestPhotoVerification(TestVerification, MockS3BotoMixin, ModuleStoreTestCase):
+class TestPhotoVerification(TestVerificationBase, MockS3BotoMixin, ModuleStoreTestCase):
 
     def test_state_transitions(self):
         """
@@ -212,17 +172,17 @@ class TestPhotoVerification(TestVerification, MockS3BotoMixin, ModuleStoreTestCa
     def test_submissions(self):
         """Test that we set our status correctly after a submission."""
         # Basic case, things go well.
-        attempt = self.create_and_submit()
+        attempt = self.create_upload_and_submit_attempt()
         self.assertEqual(attempt.status, PhotoVerification.STATUS.submitted)
 
         # We post, but Software Secure doesn't like what we send for some reason
         with patch('lms.djangoapps.verify_student.tasks.requests.post', new=mock_software_secure_post_error):
-            attempt = self.create_and_submit()
+            attempt = self.create_upload_and_submit_attempt()
             self.assertEqual(attempt.status, PhotoVerification.STATUS.must_retry)
 
         # We try to post, but run into an error (in this case a network connection error)
         with patch('lms.djangoapps.verify_student.tasks.requests.post', new=mock_software_secure_post_unavailable):
-            attempt = self.create_and_submit()
+            attempt = self.create_upload_and_submit_attempt()
             self.assertEqual(attempt.status, PhotoVerification.STATUS.must_retry)
 
     @mock.patch.dict(settings.FEATURES, {'AUTOMATIC_VERIFY_STUDENT_IDENTITY_FOR_TESTING': True})
@@ -231,14 +191,7 @@ class TestPhotoVerification(TestVerification, MockS3BotoMixin, ModuleStoreTestCa
         initial verification when the feature flag 'AUTOMATIC_VERIFY_STUDENT_IDENTITY_FOR_TESTING'
         is enabled.
         """
-        user = UserFactory.create()
-        attempt = SoftwareSecurePhotoVerification(user=user)
-        user.profile.name = "test-user"
-
-        attempt.upload_photo_id_image("Image data")
-        attempt.mark_ready()
-        attempt.submit()
-
+        attempt = self.create_upload_and_submit_attempt()
         self.assertEqual(attempt.photo_id_key, "fake-photo-id-key")
 
     # pylint: disable=line-too-long
@@ -432,7 +385,7 @@ class TestPhotoVerification(TestVerification, MockS3BotoMixin, ModuleStoreTestCa
         self.assertIsNotNone(result.expiry_email_date)
 
 
-class SSOVerificationTest(TestVerification):
+class SSOVerificationTest(TestVerificationBase):
     """
     Tests for the SSOVerification model
     """
@@ -443,7 +396,7 @@ class SSOVerificationTest(TestVerification):
         self.verification_active_at_datetime(attempt)
 
 
-class ManualVerificationTest(TestVerification):
+class ManualVerificationTest(TestVerificationBase):
     """
     Tests for the ManualVerification model
     """

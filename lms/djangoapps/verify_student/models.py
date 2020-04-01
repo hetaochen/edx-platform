@@ -761,7 +761,6 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
                 self.receipt_id,
                 copy_id_photo_from.receipt_id,
             )
-
         transaction.on_commit(
             lambda:
             send_request_to_ss_for_user.delay(user_verification_id=self.id, copy_id_photo_from=copy_id_photo_from)

@@ -5,7 +5,8 @@ from django.conf import settings
 from mock import patch
 
 from common.test.utils import MockS3BotoMixin
-from verify_student.tests.test_models import FAKE_SETTINGS, TestVerification, mock_software_secure_post_unavailable
+from verify_student.tests import TestVerificationBase
+from verify_student.tests.test_models import FAKE_SETTINGS, mock_software_secure_post_unavailable
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 
 LOGGER_NAME = 'lms.djangoapps.verify_student.tasks'
@@ -13,14 +14,13 @@ LOGGER_NAME = 'lms.djangoapps.verify_student.tasks'
 
 @patch.dict(settings.VERIFY_STUDENT, FAKE_SETTINGS)
 @ddt.ddt
-class TestPhotoVerificationTasks(TestVerification, MockS3BotoMixin, ModuleStoreTestCase):
+class TestPhotoVerificationTasks(TestVerificationBase, MockS3BotoMixin, ModuleStoreTestCase):
     @mock.patch('lms.djangoapps.verify_student.tasks.log')
     def test_logs_for_retry_until_failure(self, mock_log):
         retry_max_attempts = settings.SOFTWARE_SECURE_RETRY_MAX_ATTEMPTS
-        with patch('lms.djangoapps.verify_student.tasks.requests.post', new=mock_software_secure_post_unavailable):
-            attempt = self.create_and_submit()
+        with mock.patch('lms.djangoapps.verify_student.tasks.requests.post', new=mock_software_secure_post_unavailable):
+            attempt = self.create_and_submit_attempt()
             username = attempt.user.username
-            self.assertEqual(mock_log.error.call_count, 8)
             mock_log.error.assert_called_with(
                 'Software Secure submission failed for user %r, setting status to must_retry',
                 username,

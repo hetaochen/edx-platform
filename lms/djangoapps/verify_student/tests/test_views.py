@@ -3,7 +3,6 @@
 Tests of verify_student views.
 """
 
-
 from datetime import timedelta
 from uuid import uuid4
 
@@ -45,6 +44,9 @@ from shoppingcart.models import CertificateItem, Order
 from student.models import CourseEnrollment
 from student.tests.factories import CourseEnrollmentFactory, UserFactory
 from util.testing import UrlResetMixin
+from verify_student.tests import TestVerificationBase
+
+from verify_student.tests.test_models import TestVerification
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
@@ -53,6 +55,7 @@ from xmodule.modulestore.tests.factories import CourseFactory
 
 def mock_render_to_response(*args, **kwargs):
     return render_to_response(*args, **kwargs)
+
 
 render_mock = Mock(side_effect=mock_render_to_response)
 
@@ -64,6 +67,7 @@ class StartView(TestCase):
     This view is for the first time student is
     attempting a Photo Verification.
     """
+
     def start_url(self, course_id=""):
         return "/verify_student/{0}".format(six.moves.urllib.parse.quote(course_id))
 
@@ -80,7 +84,7 @@ class StartView(TestCase):
 
 
 @ddt.ddt
-class TestPayAndVerifyView(UrlResetMixin, ModuleStoreTestCase, XssTestMixin):
+class TestPayAndVerifyView(UrlResetMixin, ModuleStoreTestCase, XssTestMixin, TestVerificationBase):
     """
     Tests for the payment and verification flow views.
     """
@@ -897,7 +901,8 @@ class TestPayAndVerifyView(UrlResetMixin, ModuleStoreTestCase, XssTestMixin):
 
         if status in ["submitted", "approved", "expired", "denied", "error"]:
             attempt.mark_ready()
-            attempt.submit()
+            with self.immediate_on_commit():
+                attempt.submit()
 
         if status in ["approved", "expired"]:
             attempt.approve()
@@ -1100,6 +1105,7 @@ class TestPayAndVerifyView(UrlResetMixin, ModuleStoreTestCase, XssTestMixin):
         self.assertNotEqual(httpretty.last_request().headers, {})
 
 
+#
 class CheckoutTestMixin(object):
     """
     Mixin implementing test methods that should behave identically regardless
@@ -1112,6 +1118,7 @@ class CheckoutTestMixin(object):
     compatibility, the effect of using this endpoint is to choose a specific product
     (i.e. course mode) and trigger immediate checkout.
     """
+
     def setUp(self):
         """ Create a user and course. """
         super(CheckoutTestMixin, self).setUp()
@@ -1123,12 +1130,12 @@ class CheckoutTestMixin(object):
         self.client.login(username="test", password="test")
 
     def _assert_checked_out(
-            self,
-            post_params,
-            patched_create_order,
-            expected_course_key,
-            expected_mode_slug,
-            expected_status_code=200
+        self,
+        post_params,
+        patched_create_order,
+        expected_course_key,
+        expected_mode_slug,
+        expected_status_code=200
     ):
         """
         DRY helper.
@@ -1412,7 +1419,7 @@ class TestCreateOrderView(ModuleStoreTestCase):
 
 @ddt.ddt
 @patch.dict(settings.FEATURES, {'AUTOMATIC_VERIFY_STUDENT_IDENTITY_FOR_TESTING': True})
-class TestSubmitPhotosForVerification(MockS3BotoMixin, TestCase):
+class TestSubmitPhotosForVerification(MockS3BotoMixin, TestVerificationBase):
     """
     Tests for submitting photos for verification.
     """
@@ -1570,6 +1577,7 @@ class TestSubmitPhotosForVerification(MockS3BotoMixin, TestCase):
         # Now the request should succeed
         self._submit_photos(face_image=self.IMAGE_DATA)
 
+    #
     def _submit_photos(self, face_image=None, photo_id_image=None, full_name=None, expected_status_code=200):
         """Submit photos for verification.
 
@@ -1595,7 +1603,8 @@ class TestSubmitPhotosForVerification(MockS3BotoMixin, TestCase):
         if full_name is not None:
             params['full_name'] = full_name
 
-        response = self.client.post(url, params)
+        with self.immediate_on_commit():
+            response = self.client.post(url, params)
         self.assertEqual(response.status_code, expected_status_code)
 
         return response
@@ -1636,10 +1645,11 @@ class TestSubmitPhotosForVerification(MockS3BotoMixin, TestCase):
         return json.loads(last_request.body)
 
 
-class TestPhotoVerificationResultsCallback(ModuleStoreTestCase):
+class TestPhotoVerificationResultsCallback(ModuleStoreTestCase, TestVerificationBase):
     """
     Tests for the results_callback view.
     """
+
     def setUp(self):
         super(TestPhotoVerificationResultsCallback, self).setUp()
 
@@ -1654,7 +1664,8 @@ class TestPhotoVerificationResultsCallback(ModuleStoreTestCase):
         self.receipt_id = self.attempt.receipt_id
         self.client = Client()
 
-    def mocked_has_valid_signature(method, headers_dict, body_dict, access_key, secret_key):  # pylint: disable=no-self-argument, unused-argument
+    def mocked_has_valid_signature(method, headers_dict, body_dict, access_key,
+                                   secret_key):  # pylint: disable=no-self-argument, unused-argument
         """
         Used as a side effect when mocking `verify_student.ssencrypt.has_valid_signature`.
         """
@@ -1749,9 +1760,7 @@ class TestPhotoVerificationResultsCallback(ModuleStoreTestCase):
         expiry_date = now() + timedelta(
             days=settings.VERIFY_STUDENT["DAYS_GOOD_FOR"]
         )
-        verification = SoftwareSecurePhotoVerification.objects.create(user=self.user)
-        verification.mark_ready()
-        verification.submit()
+        verification = self.create_and_submit_attempt()
         verification.approve()
         verification.expiry_date = now()
         verification.expiry_email_date = now()
@@ -1895,7 +1904,7 @@ class TestPhotoVerificationResultsCallback(ModuleStoreTestCase):
         self.assertContains(response, 'Result Unknown not understood', status_code=400)
 
 
-class TestReverifyView(TestCase):
+class TestReverifyView(TestVerificationBase):
     """
     Tests for the re-verification view.
 
@@ -1911,12 +1920,6 @@ class TestReverifyView(TestCase):
         self.user = UserFactory.create(username=self.USERNAME, password=self.PASSWORD)
         success = self.client.login(username=self.USERNAME, password=self.PASSWORD)
         self.assertTrue(success, msg="Could not log in")
-
-    def create_and_submit_attempt(self):
-        attempt = SoftwareSecurePhotoVerification.objects.create(user=self.user)
-        attempt.mark_ready()
-        attempt.submit()
-        return attempt
 
     def test_reverify_view_can_do_initial_verification(self):
         """
