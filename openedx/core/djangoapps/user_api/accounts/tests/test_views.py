@@ -266,7 +266,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
         Verify that all account fields are returned (even those that are not shareable).
         """
         data = response.data
-        self.assertEqual(23, len(data))
+        self.assertEqual(24, len(data))
 
         # public fields (3)
         expected_account_privacy = (
@@ -297,6 +297,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
         self.assertEqual("Park Ave", data['mailing_address'])
         self.assertEqual(requires_parental_consent, data["requires_parental_consent"])
         self.assertIsNone(data["secondary_email"])
+        self.assertIsNone(data["secondary_email_enabled"])
         self.assertEqual(year_of_birth, data["year_of_birth"])
 
     def test_anonymous_access(self):
@@ -494,7 +495,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
             with self.assertNumQueries(queries):
                 response = self.send_get(self.client)
             data = response.data
-            self.assertEqual(23, len(data))
+            self.assertEqual(24, len(data))
             self.assertEqual(self.user.username, data["username"])
             self.assertEqual(self.user.first_name + " " + self.user.last_name, data["name"])
             for empty_field in ("year_of_birth", "level_of_education", "mailing_address", "bio"):
@@ -905,7 +906,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
         response = self.send_get(client)
         if has_full_access:
             data = response.data
-            self.assertEqual(23, len(data))
+            self.assertEqual(24, len(data))
             self.assertEqual(self.user.username, data["username"])
             self.assertEqual(self.user.first_name + " " + self.user.last_name, data["name"])
             self.assertEqual(self.user.email, data["email"])
